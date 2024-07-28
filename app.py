@@ -1,11 +1,12 @@
 import os
-import fitz  # PyMuPDF
 import requests
 import streamlit as st
 import logging
 import time
 import random
 from dotenv import load_dotenv
+import io
+import fitz  # PyMuPDF
 
 # Load environment variables from .env file
 load_dotenv()
@@ -18,26 +19,27 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL_ID = "mixtral-8x7b-32768"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Function to extract text from PDF
-@st.cache_resource
-def extract_text_from_pdf():
-    pdf_path = os.path.join("data", "SauravSrivastav_cv.pdf")
-    try:
-        if not os.path.exists(pdf_path):
-            logging.error(f"PDF file not found at {pdf_path}")
-            return "CV file not found. Please check if the file exists in the data folder."
+# GitHub PDF URL
+GITHUB_PDF_URL = "https://github.com/SauravSrivastav/sauravsrivastavbot/raw/main/Data/SauravSrivastav_cv.pdf"
 
-        document = fitz.open(pdf_path)
-        text = ""
-        for page_num in range(len(document)):
-            page = document.load_page(page_num)
-            text += page.get_text()
+@st.cache_resource
+def load_cv_content():
+    try:
+        # Fetch PDF from GitHub
+        response = requests.get(GITHUB_PDF_URL)
+        response.raise_for_status()
+        
+        # Read PDF content
+        with fitz.open(stream=io.BytesIO(response.content), filetype="pdf") as doc:
+            text = ""
+            for page in doc:
+                text += page.get_text()
+        
         return text
     except Exception as e:
-        logging.error(f"Error extracting text from {pdf_path}: {e}")
+        logging.error(f"Error loading CV content: {e}")
         return f"Failed to load CV content. Error: {str(e)}"
 
-# Function to call Groq API for chat completions
 def call_groq_api(messages, context, max_retries=5, initial_delay=1):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -61,8 +63,8 @@ def call_groq_api(messages, context, max_retries=5, initial_delay=1):
     data = {
         "model": MODEL_ID,
         "messages": api_messages,
-        "max_tokens": 150,
-        "temperature": 0.3
+        "max_tokens": 1500,
+        "temperature": 0.1
     }
     
     for attempt in range(max_retries):
@@ -88,14 +90,13 @@ def call_groq_api(messages, context, max_retries=5, initial_delay=1):
     
     return "Hey, I'm having trouble remembering stuff about Saurav right now. Mind if we chat about something else?"
 
-# Streamlit app
 def main():
     st.title("SauraBot")
 
-    # Extract Saurav's information from PDF
-    saurav_info = extract_text_from_pdf()
+    # Load Saurav's information
+    saurav_info = load_cv_content()
 
-    if saurav_info.startswith("Failed to load CV content") or saurav_info.startswith("CV file not found"):
+    if saurav_info.startswith("Failed to load CV content"):
         st.error(saurav_info)
         st.stop()
 
