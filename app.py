@@ -18,22 +18,24 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL_ID = "mixtral-8x7b-32768"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# PDF file path
-PDF_FILE = "data/SauravSrivastav_cv.pdf"
-
 # Function to extract text from PDF
 @st.cache_resource
 def extract_text_from_pdf():
+    pdf_path = os.path.join("data", "SauravSrivastav_cv.pdf")
     try:
-        document = fitz.open(PDF_FILE)
+        if not os.path.exists(pdf_path):
+            logging.error(f"PDF file not found at {pdf_path}")
+            return "CV file not found. Please check if the file exists in the data folder."
+
+        document = fitz.open(pdf_path)
         text = ""
         for page_num in range(len(document)):
             page = document.load_page(page_num)
             text += page.get_text()
         return text
     except Exception as e:
-        logging.error(f"Error extracting text from {PDF_FILE}: {e}")
-        return "Failed to load CV content. Please check if the PDF file is present and readable."
+        logging.error(f"Error extracting text from {pdf_path}: {e}")
+        return f"Failed to load CV content. Error: {str(e)}"
 
 # Function to call Groq API for chat completions
 def call_groq_api(messages, context, max_retries=5, initial_delay=1):
@@ -92,6 +94,10 @@ def main():
 
     # Extract Saurav's information from PDF
     saurav_info = extract_text_from_pdf()
+
+    if saurav_info.startswith("Failed to load CV content") or saurav_info.startswith("CV file not found"):
+        st.error(saurav_info)
+        st.stop()
 
     # Initialize session state for conversation history
     if 'messages' not in st.session_state:
