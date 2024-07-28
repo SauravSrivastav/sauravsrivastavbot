@@ -21,6 +21,20 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 # PDF file path
 PDF_FILE = "data/SauravSrivastav_cv.pdf"
 
+# Function to extract text from PDF
+@st.cache_resource
+def extract_text_from_pdf():
+    try:
+        document = fitz.open(PDF_FILE)
+        text = ""
+        for page_num in range(len(document)):
+            page = document.load_page(page_num)
+            text += page.get_text()
+        return text
+    except Exception as e:
+        logging.error(f"Error extracting text from {PDF_FILE}: {e}")
+        return "Failed to load CV content. Please check if the PDF file is present and readable."
+
 # Function to call Groq API for chat completions
 def call_groq_api(messages, context, max_retries=5, initial_delay=1):
     headers = {
@@ -72,4 +86,42 @@ def call_groq_api(messages, context, max_retries=5, initial_delay=1):
     
     return "Hey, I'm having trouble remembering stuff about Saurav right now. Mind if we chat about something else?"
 
-# ... rest of the code remains the same
+# Streamlit app
+def main():
+    st.title("SauraBot")
+
+    # Extract Saurav's information from PDF
+    saurav_info = extract_text_from_pdf()
+
+    # Initialize session state for conversation history
+    if 'messages' not in st.session_state:
+        st.session_state.messages = [
+            {"role": "assistant", "content": "Hey there! What's on your mind today?"}
+        ]
+
+    # Display conversation history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # User input
+    if prompt := st.chat_input("Type your message here:"):
+        # Add user message to chat history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Get AI response
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = call_groq_api(st.session_state.messages, saurav_info)
+            message_placeholder.markdown(full_response)
+        
+        # Add AI response to chat history
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+        # Limit conversation history to last 10 messages
+        st.session_state.messages = st.session_state.messages[-10:]
+
+if __name__ == "__main__":
+    main()
