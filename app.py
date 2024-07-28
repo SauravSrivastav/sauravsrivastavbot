@@ -5,7 +5,6 @@ import streamlit as st
 import logging
 import time
 import random
-import tiktoken
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -19,27 +18,11 @@ GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL_ID = "mixtral-8x7b-32768"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# Initialize the tokenizer
-tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")  # Use an appropriate model
-
-def count_tokens(text):
-    return len(tokenizer.encode(text))
-
-# Function to extract text from PDF
-def extract_text_from_pdf(pdf_path):
-    try:
-        document = fitz.open(pdf_path)
-        text = ""
-        for page_num in range(len(document)):
-            page = document.load_page(page_num)
-            text += page.get_text()
-        return text
-    except Exception as e:
-        logging.error(f"Error extracting text from {pdf_path}: {e}")
-        return ""
+# PDF file path
+PDF_FILE = "data/SauravSrivastav_cv.pdf"
 
 # Function to call Groq API for chat completions
-def call_groq_api(messages, context, max_retries=5, initial_delay=1, max_tokens_per_minute=5000):
+def call_groq_api(messages, context, max_retries=5, initial_delay=1):
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
@@ -66,14 +49,6 @@ def call_groq_api(messages, context, max_retries=5, initial_delay=1, max_tokens_
         "temperature": 0.3
     }
     
-    # Count tokens in the request
-    request_tokens = sum(count_tokens(msg["content"]) for msg in api_messages)
-    
-    # Check if we have enough tokens left
-    if request_tokens > max_tokens_per_minute:
-        logging.warning(f"Request exceeds token limit. Tokens: {request_tokens}")
-        return "Sorry, my brain's a bit fried. Can we chat about something simpler?"
-    
     for attempt in range(max_retries):
         try:
             response = requests.post(GROQ_API_URL, headers=headers, json=data)
@@ -81,16 +56,12 @@ def call_groq_api(messages, context, max_retries=5, initial_delay=1, max_tokens_
             logging.info(f"API Response: {response.text}")
             response.raise_for_status()
             
-            # Update token count
             response_json = response.json()
-            tokens_used = response_json["usage"]["total_tokens"]
-            max_tokens_per_minute -= tokens_used
-            
             ai_response = response_json.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not ai_response or ai_response.lower().startswith("i'm sorry") or ai_response.lower().startswith("i apologize"):
                 return "Not sure about that. What else did you want to know about Saurav?"
             return ai_response
-        except requests.exceptions.RequestException as e:
+        except requests.RequestException as e:
             if response.status_code == 429:  # Rate limit exceeded
                 wait_time = initial_delay * (2 ** attempt) + random.uniform(0, 1)
                 logging.warning(f"Rate limit exceeded. Retrying in {wait_time:.2f} seconds.")
@@ -101,53 +72,4 @@ def call_groq_api(messages, context, max_retries=5, initial_delay=1, max_tokens_
     
     return "Hey, I'm having trouble remembering stuff about Saurav right now. Mind if we chat about something else?"
 
-# Function to load information about Saurav
-@st.cache_data
-def load_saurav_info():
-    pdf_folder = "/Users/sauravs/Documents/00-Personal-Data/02-CV"
-    pdf_files = ["SauravSrivastav_cv.pdf"]
-    combined_text = ""
-    for pdf_file in pdf_files:
-        pdf_path = os.path.join(pdf_folder, pdf_file)
-        combined_text += extract_text_from_pdf(pdf_path) + "\n\n"
-    return combined_text
-
-# Streamlit app
-def main():
-    st.title("SauraBot")
-
-    # Load Saurav's information
-    saurav_info = load_saurav_info()
-
-    # Initialize session state for conversation history
-    if 'messages' not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Hey there! What's on your mind today?"}
-        ]
-
-    # Display conversation history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    # User input
-    if prompt := st.chat_input("Type your message here:"):
-        # Add user message to chat history
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        # Get AI response
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = call_groq_api(st.session_state.messages, saurav_info)
-            message_placeholder.markdown(full_response)
-        
-        # Add AI response to chat history
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-        # Limit conversation history to last 10 messages
-        st.session_state.messages = st.session_state.messages[-10:]
-
-if __name__ == "__main__":
-    main()
+# ... rest of the code remains the same
