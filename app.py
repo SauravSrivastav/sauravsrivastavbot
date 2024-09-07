@@ -8,7 +8,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from langchain.llms.groq import Groq
+from langchain_groq import ChatGroq  # Updated import statement
 
 # Load environment variables
 load_dotenv()
@@ -40,7 +40,11 @@ def load_and_process_pdf():
     return vectorstore
 
 def get_qa_chain(vectorstore):
-    llm = Groq(api_key=GROQ_API_KEY)
+    llm = ChatGroq(
+        temperature=0.1,
+        groq_api_key=GROQ_API_KEY,
+        model_name="mixtral-8x7b-32768"
+    )
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
@@ -73,11 +77,13 @@ def main():
 
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
-            result = qa_chain({"query": prompt})
-            response = result['result']
-            message_placeholder.markdown(response)
+            full_response = ""
+            for response in qa_chain.stream({"query": prompt}):
+                full_response += response['result']
+                message_placeholder.markdown(full_response + "▌")
+            message_placeholder.markdown(full_response)
         
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 if __name__ == "__main__":
     main()
