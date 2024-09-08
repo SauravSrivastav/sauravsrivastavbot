@@ -11,3 +11,4 @@ langchain
 langchain-community
 langchain-groq
 langchain_huggingface
+PyPDF2
