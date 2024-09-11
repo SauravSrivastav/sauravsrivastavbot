@@ -7,9 +7,12 @@ from PyPDF2 import PdfReader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.chains import RetrievalQA
-from langchain_groq import ChatGroq
-from langchain.prompts import PromptTemplate
+import logging
+from groq import Groq
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -17,12 +20,14 @@ load_dotenv()
 # Configuration
 GITHUB_PDF_URL = "https://github.com/SauravSrivastav/sauravsrivastavbot/raw/main/Data/SauravSrivastav_cv.pdf"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+LLAMA_MODEL = "llama-3.1-70b-versatile"
+
+if not GROQ_API_KEY:
+    st.error("GROQ_API_KEY is not set in the environment variables. Please set it and restart the application.")
+    st.stop()
 
 @st.cache_resource
 def load_and_process_pdf():
-    """
-    Download and process the PDF, then create and return a FAISS vector store.
-    """
     try:
         response = requests.get(GITHUB_PDF_URL)
         response.raise_for_status()
@@ -41,96 +46,126 @@ def load_and_process_pdf():
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
         vectorstore = FAISS.from_texts(chunks, embeddings)
-        return vectorstore
+        return vectorstore, text
     except Exception as e:
-        st.error(f"Error processing PDF: {str(e)}")
-        return None
+        logger.error(f"Error processing PDF: {str(e)}")
+        return None, None
 
-def get_qa_chain(vectorstore):
-    """
-    Create and return a question-answering chain using the Groq API and FAISS vector store.
-    """
+def alfred_response(user_prompt: str, chat_history, resume_text: str, vectorstore):
     try:
-        llm = ChatGroq(temperature=0, groq_api_key=GROQ_API_KEY, model_name="mixtral-8x7b-32768")
+        groq_client = Groq(api_key=GROQ_API_KEY)
+        
+        # Retrieve relevant context from the vectorstore
+        relevant_docs = vectorstore.similarity_search(user_prompt, k=3)
+        relevant_context = "\n".join([doc.page_content for doc in relevant_docs])
+        
+        # Construct system message with resume context, relevant information, and chat history
+        system_message = f"""You are Alfred, Saurav Srivastav's AI assistant. Use this resume context: {resume_text}
 
-        template = """You are Saurav Srivastav, a professional with experience in Cloud and DevOps engineering.
-        Use the following pieces of context to answer the question at the end in a natural and conversational manner.
-        If you don't know the answer or can't find relevant information in the context, just say that you don't have enough information to answer the question accurately.
+Relevant information from the resume:
+{relevant_context}
 
-        Context:
-        {context}
+Guidelines:
+1. Always stay in character as Alfred, Saurav's AI assistant.
+2. Provide information primarily about Saurav's professional background, skills, and achievements.
+3. If asked about topics unrelated to Saurav, provide a brief, informative response and then try to steer the conversation back to Saurav's expertise.
+4. Do not share personal contact information.
+5. Maintain context throughout the conversation and refer back to previous points when relevant.
+6. If you don't have specific information about an aspect of Saurav's background, say so honestly.
+7. Use the chat history to maintain consistency in your responses.
 
-        Question: {question}
-        Answer: """
-
-        PROMPT = PromptTemplate(template=template, input_variables=["context", "question"])
-
-        qa_chain = RetrievalQA.from_chain_type(
-            llm=llm,
-            chain_type="stuff",
-            retriever=vectorstore.as_retriever(search_kwargs={"k": 3}),
-            return_source_documents=True,
-            chain_type_kwargs={"prompt": PROMPT}
+Chat History:
+"""
+        for role, content in chat_history:
+            system_message += f"{role.capitalize()}: {content}\n"
+        
+        response = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_prompt}
+            ],
+            model=LLAMA_MODEL,
+            temperature=0.1,
+            max_tokens=1024,
         )
-        return qa_chain
+
+        return response.choices[0].message.content
+
     except Exception as e:
-        st.error(f"Error creating QA chain: {str(e)}")
-        return None
+        logger.error(f"Error in alfred_response: {str(e)}")
+        return "I apologize, but I'm having trouble processing your request at the moment. How about we discuss Saurav's expertise in Cloud engineering? Would you like to know more about his experience with Kubernetes or containerization?"
 
 def main():
-    st.title("Chat with Saurav Srivastav")
+    st.set_page_config(page_title="Chat with Alfred - Saurav's AI Assistant", page_icon="🤖", layout="centered")
 
-    vectorstore = load_and_process_pdf()
-    if vectorstore is None:
+    st.title("Chat with Alfred, Saurav's AI Assistant")
+
+    # Custom CSS for better UI
+    st.markdown("""
+        <style>
+        .stTextInput > div > div > input {
+            caret-color: #FF4B4B;
+        }
+        .stButton > button {
+            background-color: #FF4B4B;
+            color: white;
+        }
+        .stButton > button:hover {
+            background-color: #FF6B6B;
+            color: white;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    with st.sidebar:
+        st.title("🦙💬 Alfred")
+        st.caption("🚀 A Chatbot for Saurav's Professional Insights and More")
+        st.markdown("📝 [Access resume here](https://github.com/SauravSrivastav/sauravsrivastavbot/raw/main/Data/SauravSrivastav_cv.pdf)")
+        st.markdown("👾 [Access GitHub here](https://github.com/SauravSrivastav)")
+
+        if st.button('Clear Chat History'):
+            st.session_state.messages = []
+            st.experimental_rerun()
+
+    vectorstore, resume_text = load_and_process_pdf()
+    if vectorstore is None or resume_text is None:
         st.error("Failed to load and process the CV. Please try again later.")
         return
 
-    qa_chain = get_qa_chain(vectorstore)
-    if qa_chain is None:
-        st.error("Failed to initialize the Q&A system. Please check your API key and try again.")
-        return
-
-    # Initialize chat history
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.messages = [{
+            "role": "assistant",
+            "content": "Hello! I'm Alfred, Saurav Srivastav's personal AI assistant. I'm here to provide information about Saurav's professional background in Cloud and DevOps engineering. How can I assist you today?"
+        }]
 
-    # Display chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-    # Accept user input
-    if prompt := st.chat_input("Ask me anything about my experiences and achievements:"):
-        # Add user message to chat history
+    if prompt := st.chat_input("Ask about Saurav's professional background or any other topic"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-
-        # Display user message in chat message container
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Generate AI response
         with st.chat_message("assistant"):
             message_placeholder = st.empty()
             full_response = ""
 
             try:
-                with st.spinner("Searching for an answer..."):
-                    response = qa_chain({"query": prompt})
-                    if response['result']:
-                        full_response = response['result']
-                    else:
-                        full_response = "I'm sorry, I don't have enough information to answer that question accurately based on my experiences and achievements."
+                with st.spinner("Alfred is thinking..."):
+                    chat_history = [(m["role"], m["content"]) for m in st.session_state.messages]
+                    full_response = alfred_response(prompt, chat_history, resume_text, vectorstore)
 
                 message_placeholder.markdown(full_response)
             except Exception as e:
-                full_response = f"An error occurred while processing your request: {str(e)}"
+                logger.error(f"Error in main chat loop: {str(e)}")
+                full_response = "I apologize, but I'm having trouble processing your request at the moment. How about we discuss Saurav's expertise in Cloud engineering? Would you like to know more about his experience with Kubernetes or containerization?"
                 message_placeholder.markdown(full_response)
 
-        # Add assistant response to chat history
         st.session_state.messages.append({"role": "assistant", "content": full_response})
 
     st.markdown("---")
-    st.markdown("**Note:** This chatbot provides information based on Saurav Srivastav's experiences and achievements.")
+    st.caption("Alfred is here to assist you with information about Saurav Srivastav's professional background in Cloud and DevOps engineering.")
 
 if __name__ == "__main__":
     main()
